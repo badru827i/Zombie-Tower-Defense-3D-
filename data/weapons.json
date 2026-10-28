@@ -1,0 +1,7 @@
+{
+  "Sentry": {"damage": 20, "range": 6, "cooldown": 0.8, "cost": 50, "max_level": 5},
+  "Heavy Cannon": {"damage": 100, "range": 8, "cooldown": 2.2, "cost": 140, "max_level": 5},
+  "Gatling": {"damage": 8, "range": 7, "cooldown": 0.16, "cost": 110, "max_level": 5},
+  "Rocket": {"damage": 80, "range": 10, "cooldown": 2.0, "cost": 180, "max_level": 5},
+  "Tesla": {"damage": 25, "range": 6, "cooldown": 0.55, "cost": 160, "max_level": 5}
+}
