@@ -154,29 +154,35 @@ func _make_hud() -> void:
 	column.add_child(status_label)
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Mouse works in desktop builds; ScreenTouch supports Android taps.
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var camera := get_viewport().get_camera_3d()
-		if camera == null:
-			return
-		var origin := camera.project_ray_origin(event.position)
-		var direction := camera.project_ray_normal(event.position)
-		if absf(direction.y) < 0.0001:
-			return
-		var distance := -origin.y / direction.y
-		if distance < 0:
-			return
-		var hit := origin + direction * distance
-		var cell := Vector2i(roundi(hit.x / TILE_SIZE), roundi(hit.z / TILE_SIZE))
-		if cell.x < 0 or cell.y < 0 or cell.x >= GRID_W or cell.y >= GRID_H:
-			return
-		_place_turret(cell)
+		_handle_board_tap(event.position)
+	elif event is InputEventScreenTouch and event.pressed:
+		_handle_board_tap(event.position)
+
+func _handle_board_tap(screen_position: Vector2) -> void:
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return
+	var origin := camera.project_ray_origin(screen_position)
+	var direction := camera.project_ray_normal(screen_position)
+	if absf(direction.y) < 0.0001:
+		return
+	var distance := -origin.y / direction.y
+	if distance < 0:
+		return
+	var hit := origin + direction * distance
+	var cell := Vector2i(roundi(hit.x / TILE_SIZE), roundi(hit.z / TILE_SIZE))
+	if cell.x < 0 or cell.y < 0 or cell.x >= GRID_W or cell.y >= GRID_H:
+		return
+	_place_turret(cell)
 
 func _place_turret(cell: Vector2i) -> void:
 	if PATH_CELLS.has(cell):
 		status_label.text = "Blocked: zombies need this path."
 		return
 	if grid[cell] != null:
-		status_label.text = "This tile already has a turret."
+		_upgrade_turret(grid[cell])
 		return
 	var data: Dictionary = WEAPONS[selected_weapon]
 	if money < int(data["cost"]):
@@ -199,7 +205,23 @@ func _place_turret(cell: Vector2i) -> void:
 	var turret := {"cell": cell, "position": _cell_world(cell), "node": mesh_node, "type": selected_weapon, "level": 1, "cooldown": 0.0}
 	turrets.append(turret)
 	grid[cell] = turret
-	status_label.text = "%s placed. Upgrade interaction is next milestone." % selected_weapon
+	status_label.text = "%s placed at Level 1. Tap it again to upgrade." % selected_weapon
+
+func _upgrade_turret(turret: Dictionary) -> void:
+	var level := int(turret["level"])
+	if level >= 5:
+		status_label.text = "%s is already max Level 5." % turret["type"]
+		return
+	var next_level := level + 1
+	var cost := int(WEAPONS[turret["type"]]["cost"] * 0.55 * level)
+	if money < cost:
+		status_label.text = "Upgrade to Lv.%d costs $%d; not enough cash." % [next_level, cost]
+		return
+	money -= cost
+	turret["level"] = next_level
+	var node := turret["node"] as Node3D
+	node.scale = Vector3.ONE * (1.0 + 0.08 * float(next_level - 1))
+	status_label.text = "%s upgraded to Level %d (damage x%.2f)." % [turret["type"], next_level, 1.0 + 0.35 * float(next_level - 1)]
 
 func _update_turrets(delta: float) -> void:
 	for turret in turrets:
