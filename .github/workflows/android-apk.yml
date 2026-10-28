@@ -24,32 +24,40 @@ jobs:
       - name: Prepare Godot export templates
         shell: bash
         run: |
-          mkdir -p "$HOME/.local/share/godot/export_templates"
-          mkdir -p "$HOME/.config"
+          mkdir -p "$HOME/.local/share/godot/export_templates" "$HOME/.config/godot" "$HOME/.android"
           if [ -d /root/.config/godot ]; then
-            cp -a /root/.config/godot "$HOME/.config/godot"
+            cp -an /root/.config/godot/. "$HOME/.config/godot/" || true
           fi
           if [ -d /root/.local/share/godot/export_templates/4.3.stable ]; then
-            cp -a /root/.local/share/godot/export_templates/4.3.stable "$HOME/.local/share/godot/export_templates/4.3.stable"
+            cp -an /root/.local/share/godot/export_templates/4.3.stable "$HOME/.local/share/godot/export_templates/4.3.stable"
           fi
           echo "Godot: $(godot --version)"
           test -d "$HOME/.local/share/godot/export_templates/4.3.stable"
 
-      - name: Configure Android Java SDK path
+      - name: Configure Android SDK, Java and debug signing
         shell: bash
         run: |
+          set -euo pipefail
           SETTINGS="$HOME/.config/godot/editor_settings-4.3.tres"
-          mkdir -p "$(dirname "$SETTINGS")"
+          mkdir -p "$(dirname "$SETTINGS")" "$HOME/.android"
           touch "$SETTINGS"
-          if ! grep -q 'export/android/java_sdk_path' "$SETTINGS"; then
-            echo 'export/android/java_sdk_path = "/usr/lib/jvm/java-17-openjdk-amd64"' >> "$SETTINGS"
+          grep -q 'export/android/java_sdk_path' "$SETTINGS" || echo 'export/android/java_sdk_path = "/usr/lib/jvm/java-17-openjdk-amd64"' >> "$SETTINGS"
+          grep -q 'export/android/android_sdk_path' "$SETTINGS" || echo 'export/android/android_sdk_path = "/usr/lib/android-sdk"' >> "$SETTINGS"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
+          grep -q 'export/android/debug_keystore' "$SETTINGS" || echo "export/android/debug_keystore = \"$HOME/.android/debug.keystore\"" >> "$SETTINGS"
+          grep -q 'export/android/debug_keystore_user' "$SETTINGS" || echo 'export/android/debug_keystore_user = "androiddebugkey"' >> "$SETTINGS"
+          grep -q 'export/android/debug_keystore_pass' "$SETTINGS" || echo 'export/android/debug_keystore_pass = "android"' >> "$SETTINGS"
           java -version
+          test -d /usr/lib/android-sdk
           test -d /usr/lib/jvm/java-17-openjdk-amd64
+          test -s "$HOME/.android/debug.keystore"
 
       - name: Import and export debug APK
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p build/android
           godot --headless --editor --path . --quit
           godot --headless --path . --verbose --export-debug "Android" build/android/ZombieTowerDefense3D-debug.apk
