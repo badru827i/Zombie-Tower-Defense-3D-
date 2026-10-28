@@ -1,0 +1,65 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**'
+      - '.github/workflows/android-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    name: Export Android APK (Godot 4.3)
+    runs-on: ubuntu-22.04
+    container:
+      image: barichello/godot-ci:4.3
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Godot export templates
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.local/share/godot/export_templates"
+          mkdir -p "$HOME/.config"
+          if [ -d /root/.config/godot ]; then
+            cp -a /root/.config/godot "$HOME/.config/godot"
+          fi
+          if [ -d /root/.local/share/godot/export_templates/4.3.stable ]; then
+            cp -a /root/.local/share/godot/export_templates/4.3.stable "$HOME/.local/share/godot/export_templates/4.3.stable"
+          fi
+          echo "Godot: $(godot --version)"
+          test -d "$HOME/.local/share/godot/export_templates/4.3.stable"
+
+      - name: Configure Android Java SDK path
+        shell: bash
+        run: |
+          SETTINGS="$HOME/.config/godot/editor_settings-4.3.tres"
+          mkdir -p "$(dirname "$SETTINGS")"
+          touch "$SETTINGS"
+          if ! grep -q 'export/android/java_sdk_path' "$SETTINGS"; then
+            echo 'export/android/java_sdk_path = "/usr/lib/jvm/java-17-openjdk-amd64"' >> "$SETTINGS"
+          fi
+          java -version
+          test -d /usr/lib/jvm/java-17-openjdk-amd64
+
+      - name: Import and export debug APK
+        shell: bash
+        run: |
+          mkdir -p build/android
+          godot --headless --editor --path . --quit
+          godot --headless --path . --verbose --export-debug "Android" build/android/ZombieTowerDefense3D-debug.apk
+          test -s build/android/ZombieTowerDefense3D-debug.apk
+          file build/android/ZombieTowerDefense3D-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZombieTowerDefense3D-debug-APK
+          path: build/android/ZombieTowerDefense3D-debug.apk
+          if-no-files-found: error
+          retention-days: 14
