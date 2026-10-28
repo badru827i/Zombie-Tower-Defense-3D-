@@ -1,0 +1,7 @@
+{
+  "Walker": {"hp": 70, "speed": 1.2, "reward": 10},
+  "Runner": {"hp": 45, "speed": 2.5, "reward": 12},
+  "Armored": {"hp": 220, "speed": 0.75, "reward": 20},
+  "Toxic": {"hp": 130, "speed": 1.0, "reward": 18},
+  "Mutant Boss": {"hp": 1600, "speed": 0.55, "reward": 150}
+}
