@@ -5,6 +5,8 @@
 ## Current milestone: prototype foundation
 
 - Top-down 3D arena with a visible zombie route and build grid.
+- Mouse and Android screen-tap placement controls.
+- Tap an existing turret to upgrade it through Level 5, with upgrade costs.
 - Five turret types: Sentry, Heavy Cannon, Gatling, Rocket, Tesla.
 - Five enemy types: Walker, Runner, Armored, Toxic, Mutant Boss.
 - Automatic turret targeting and basic wave/episode progression.
@@ -22,11 +24,11 @@ The target is 100 episodes with rising difficulty, special encounters, and a fin
 
 ## Android APK
 
-Android export needs the Godot Android export templates plus Android SDK/JDK setup. The APK is not ready until an export succeeds and the resulting build is tested on a real Android device. CI/export setup is a follow-up milestone.
+Android export needs the Godot Android export templates plus Android SDK/JDK setup. The APK is not ready until an export succeeds and the resulting build is tested on a real Android device. A GitHub Actions workflow now performs a headless Godot import/parse check. This is not an APK export workflow yet.
 
 ## Next development tasks
 
-- Add turret selection/upgrade interaction (maximum Level 5).
+- Add clearer turret selection/upgrade feedback and visual attack effects.
 - Improve zombie path movement, attack effects, and hit feedback.
 - Load weapon/enemy balance from JSON.
 - Implement robust save/load and campaign completion handling.
