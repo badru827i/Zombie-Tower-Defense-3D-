@@ -62,7 +62,6 @@ jobs:
           godot --headless --editor --path . --quit
           godot --headless --path . --verbose --export-debug "Android" build/android/ZombieTowerDefense3D-debug.apk
           test -s build/android/ZombieTowerDefense3D-debug.apk
-          file build/android/ZombieTowerDefense3D-debug.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
