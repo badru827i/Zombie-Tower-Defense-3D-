@@ -306,23 +306,109 @@ func _place_turret(cell: Vector2i) -> void:
 		status_label.text = "Not enough cash for %s." % selected_weapon
 		return
 	money -= int(data["cost"])
-	var mesh_node := MeshInstance3D.new()
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = 0.25
-	mesh.bottom_radius = 0.42
-	mesh.height = 0.55
-	mesh_node.mesh = mesh
-	mesh_node.position = _cell_world(cell) + Vector3(0, 0.42, 0)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = data["color"]
-	mat.metallic = 0.55
-	mat.roughness = 0.3
-	mesh_node.material_override = mat
+	var mesh_node := Node3D.new()
+	mesh_node.position = _cell_world(cell)
 	add_child(mesh_node)
 	var turret := {"cell": cell, "position": _cell_world(cell), "node": mesh_node, "type": selected_weapon, "level": 1, "cooldown": 0.0}
+	_rebuild_turret_visual(turret)
 	turrets.append(turret)
 	grid[cell] = turret
 	status_label.text = "%s placed at Level 1. Tap it again to upgrade." % selected_weapon
+
+
+func _rebuild_turret_visual(turret: Dictionary) -> void:
+	# Rebuild the local 3D model on every upgrade so its silhouette changes by level.
+	var root := turret["node"] as Node3D
+	for child in root.get_children():
+		child.queue_free()
+	var level := int(turret["level"])
+	var weapon_name: String = turret["type"]
+	var weapon_data: Dictionary = WEAPONS[weapon_name]
+	var accent: Color = weapon_data["color"]
+
+	var metal := StandardMaterial3D.new()
+	metal.albedo_color = Color(0.12, 0.15, 0.18).lerp(accent, 0.12 * float(level - 1))
+	metal.metallic = 0.72
+	metal.roughness = 0.34
+	var weapon_mat := StandardMaterial3D.new()
+	weapon_mat.albedo_color = accent
+	weapon_mat.metallic = 0.48
+	weapon_mat.roughness = 0.28
+	var glow := StandardMaterial3D.new()
+	glow.albedo_color = accent
+	glow.emission_enabled = true
+	glow.emission = accent * (0.45 + 0.18 * float(level - 1))
+
+	# Heavy armored base grows at each tier.
+	var base := CylinderMesh.new()
+	base.top_radius = 0.27 + 0.025 * float(level - 1)
+	base.bottom_radius = 0.43 + 0.035 * float(level - 1)
+	base.height = 0.28 + 0.035 * float(level - 1)
+	_add_turret_part(root, base, Vector3(0, 0.16, 0), metal)
+
+	var head := BoxMesh.new()
+	head.size = Vector3(0.42 + 0.08 * float(level - 1), 0.22 + 0.025 * float(level - 1), 0.42 + 0.08 * float(level - 1))
+	_add_turret_part(root, head, Vector3(0, 0.39, 0), metal)
+
+	# Additional armor plates make upgrades visibly change the silhouette.
+	if level >= 2:
+		for side in [-1.0, 1.0]:
+			var plate := BoxMesh.new()
+			plate.size = Vector3(0.13 + 0.025 * float(level - 2), 0.28 + 0.035 * float(level - 2), 0.34)
+			_add_turret_part(root, plate, Vector3(side * (0.27 + 0.035 * float(level - 2)), 0.43, 0), weapon_mat)
+	if level >= 4:
+		var rear := BoxMesh.new()
+		rear.size = Vector3(0.5, 0.16, 0.22)
+		_add_turret_part(root, rear, Vector3(0, 0.53, 0.23), metal)
+	if level == 5:
+		var crown := SphereMesh.new()
+		crown.radius = 0.16
+		crown.height = 0.32
+		_add_turret_part(root, crown, Vector3(0, 0.67, 0), glow)
+
+	# Each weapon keeps its identity; barrels or energy cores grow with upgrades.
+	if weapon_name == "Tesla":
+		var core := SphereMesh.new()
+		core.radius = 0.19 + 0.035 * float(level - 1)
+		core.height = core.radius * 2.0
+		_add_turret_part(root, core, Vector3(0, 0.66, -0.08), glow)
+		if level >= 3:
+			for side in [-1.0, 1.0]:
+				var prong := CylinderMesh.new()
+				prong.top_radius = 0.035
+				prong.bottom_radius = 0.065
+				prong.height = 0.38 + 0.05 * float(level - 3)
+				_add_turret_part(root, prong, Vector3(side * 0.25, 0.69, -0.08), weapon_mat)
+	else:
+		var barrel_count := level if weapon_name == "Gatling" else (1 + int((level - 1) / 2))
+		barrel_count = mini(barrel_count, 5)
+		for barrel_index in range(barrel_count):
+			var barrel := CylinderMesh.new()
+			barrel.top_radius = 0.055 if weapon_name != "Heavy Cannon" else 0.09
+			barrel.bottom_radius = barrel.top_radius * 1.25
+			barrel.height = 0.52 + 0.10 * float(level - 1)
+			var x_offset := (float(barrel_index) - float(barrel_count - 1) * 0.5) * 0.14
+			_add_turret_part(root, barrel, Vector3(x_offset, 0.48, -0.32), weapon_mat, Vector3.ONE, Vector3(PI / 2.0, 0, 0))
+		if weapon_name == "Rocket" and level >= 3:
+			for side in [-1.0, 1.0]:
+				var pod := BoxMesh.new()
+				pod.size = Vector3(0.12, 0.16, 0.38 + 0.04 * float(level - 3))
+				_add_turret_part(root, pod, Vector3(side * 0.28, 0.48, -0.12), metal)
+
+	# Small glowing tier indicator: higher levels are easier to identify in RTS view.
+	var indicator := SphereMesh.new()
+	indicator.radius = 0.055 + 0.012 * float(level - 1)
+	indicator.height = indicator.radius * 2.0
+	_add_turret_part(root, indicator, Vector3(0, 0.82 + 0.025 * float(level - 1), 0.1), glow)
+
+func _add_turret_part(parent: Node3D, mesh: Mesh, local_position: Vector3, material: Material, local_scale: Vector3 = Vector3.ONE, local_rotation: Vector3 = Vector3.ZERO) -> void:
+	var part := MeshInstance3D.new()
+	part.mesh = mesh
+	part.position = local_position
+	part.scale = local_scale
+	part.rotation = local_rotation
+	part.material_override = material
+	parent.add_child(part)
 
 func _upgrade_turret(turret: Dictionary) -> void:
 	var level := int(turret["level"])
@@ -336,9 +422,8 @@ func _upgrade_turret(turret: Dictionary) -> void:
 		return
 	money -= cost
 	turret["level"] = next_level
-	var node := turret["node"] as Node3D
-	node.scale = Vector3.ONE * (1.0 + 0.08 * float(next_level - 1))
-	status_label.text = "%s upgraded to Level %d (damage x%.2f)." % [turret["type"], next_level, 1.0 + 0.35 * float(next_level - 1)]
+	_rebuild_turret_visual(turret)
+	status_label.text = "%s evolved to Level %d • Damage x%.2f." % [turret["type"], next_level, 1.0 + 0.35 * float(next_level - 1)]
 
 func _update_turrets(delta: float) -> void:
 	for turret in turrets:
