@@ -36,18 +36,25 @@ var wave_active := false
 var grid: Dictionary = {}
 var turrets: Array[Dictionary] = []
 var zombies: Array[Dictionary] = []
+var forest_props: Array[Dictionary] = []
+var cull_timer := 0.0
 var hud: Label
 var status_label: Label
 
 func _ready() -> void:
 	_make_environment()
 	_make_arena()
+	_make_forest_decor()
 	_make_hud()
 	_start_wave()
 
 func _process(delta: float) -> void:
 	_update_zombies(delta)
 	_update_turrets(delta)
+	cull_timer += delta
+	if cull_timer >= 0.35:
+		cull_timer = 0.0
+		_update_forest_culling()
 	if wave_active:
 		spawn_timer -= delta
 		if spawn_timer <= 0.0 and enemies_to_spawn > 0:
@@ -71,7 +78,10 @@ func _make_environment() -> void:
 	e.background_color = Color(0.025, 0.04, 0.075)
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	e.ambient_light_color = Color(0.5, 0.58, 0.75)
-	e.ambient_light_energy = 0.8
+	e.ambient_light_energy = 0.55
+	e.fog_enabled = true
+	e.fog_light_color = Color(0.055, 0.075, 0.09)
+	e.fog_density = 0.018
 	env.environment = e
 	add_child(env)
 	var light := DirectionalLight3D.new()
@@ -114,6 +124,113 @@ func _make_arena() -> void:
 		m.emission = Color(0.7, 0.18, 0.03)
 		marker.material_override = m
 		add_child(marker)
+
+
+func _make_forest_decor() -> void:
+	# Locally generated low-poly forest props: no map download or remote assets.
+	var trunk_mat := StandardMaterial3D.new()
+	trunk_mat.albedo_color = Color(0.12, 0.075, 0.055)
+	trunk_mat.roughness = 1.0
+	var leaf_mats: Array[StandardMaterial3D] = []
+	for color in [Color(0.025, 0.09, 0.065), Color(0.035, 0.12, 0.075), Color(0.07, 0.13, 0.075)]:
+		var leaf := StandardMaterial3D.new()
+		leaf.albedo_color = color
+		leaf.roughness = 1.0
+		leaf_mats.append(leaf)
+	var rock_mat := StandardMaterial3D.new()
+	rock_mat.albedo_color = Color(0.12, 0.14, 0.14)
+	rock_mat.roughness = 1.0
+	var blood_mat := StandardMaterial3D.new()
+	blood_mat.albedo_color = Color(0.28, 0.008, 0.018)
+	blood_mat.roughness = 0.3
+
+	# Trees form a forest border, keeping turret cells and the zombie route readable.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 74129
+	for i in range(42):
+		var side := i % 4
+		var x := 0.0
+		var z := 0.0
+		match side:
+			0:
+				x = rng.randf_range(-2.0, GRID_W * TILE_SIZE + 2.0)
+				z = rng.randf_range(-2.8, -1.6)
+			1:
+				x = rng.randf_range(-2.0, GRID_W * TILE_SIZE + 2.0)
+				z = GRID_H * TILE_SIZE + rng.randf_range(1.6, 2.8)
+			2:
+				x = rng.randf_range(-2.8, -1.6)
+				z = rng.randf_range(0.0, GRID_H * TILE_SIZE)
+			3:
+				x = GRID_W * TILE_SIZE + rng.randf_range(1.6, 2.8)
+				z = rng.randf_range(0.0, GRID_H * TILE_SIZE)
+		var tree := Node3D.new()
+		tree.position = Vector3(x, 0.0, z)
+		add_child(tree)
+		var trunk := MeshInstance3D.new()
+		var trunk_mesh := CylinderMesh.new()
+		trunk_mesh.top_radius = 0.12
+		trunk_mesh.bottom_radius = 0.22
+		trunk_mesh.height = rng.randf_range(1.8, 2.8)
+		trunk.mesh = trunk_mesh
+		trunk.position.y = trunk_mesh.height * 0.5
+		trunk.material_override = trunk_mat
+		tree.add_child(trunk)
+		for crown_index in range(2):
+			var crown := MeshInstance3D.new()
+			var crown_mesh := SphereMesh.new()
+			crown_mesh.radius = rng.randf_range(0.65, 1.0)
+			crown_mesh.height = crown_mesh.radius * 1.7
+			crown.mesh = crown_mesh
+			crown.position = Vector3(0, trunk_mesh.height * 0.65 + crown_index * 0.48, 0)
+			crown.scale = Vector3(1.0, 1.25, 1.0)
+			crown.material_override = leaf_mats[rng.randi_range(0, leaf_mats.size() - 1)]
+			tree.add_child(crown)
+		forest_props.append({"node": tree, "position": Vector2(x, z), "kind": "tree"})
+
+	# Scattered rocks at the forest edge.
+	for i in range(18):
+		var rock := MeshInstance3D.new()
+		var rock_mesh := SphereMesh.new()
+		rock_mesh.radius = rng.randf_range(0.22, 0.48)
+		rock_mesh.height = rock_mesh.radius * 1.2
+		rock.mesh = rock_mesh
+		var edge_x := rng.randf_range(-1.8, GRID_W * TILE_SIZE + 1.8)
+		var edge_z := -1.15 if i % 2 == 0 else GRID_H * TILE_SIZE + 1.15
+		rock.position = Vector3(edge_x, rock_mesh.radius * 0.35, edge_z)
+		rock.scale = Vector3(1.3, 0.65, 0.9)
+		rock.material_override = rock_mat
+		add_child(rock)
+		forest_props.append({"node": rock, "position": Vector2(edge_x, edge_z), "kind": "rock"})
+
+	# Stylized blood marks along the dirt route; these are flat decals made from meshes.
+	for i in range(13):
+		var path_cell: Vector2i = PATH_CELLS[mini(i + 2, PATH_CELLS.size() - 1)]
+		var stain := MeshInstance3D.new()
+		var stain_mesh := CylinderMesh.new()
+		stain_mesh.top_radius = rng.randf_range(0.12, 0.23)
+		stain_mesh.bottom_radius = stain_mesh.top_radius
+		stain_mesh.height = 0.012
+		stain.mesh = stain_mesh
+		stain.position = _cell_world(path_cell) + Vector3(rng.randf_range(-0.35, 0.35), 0.075, rng.randf_range(-0.35, 0.35))
+		stain.scale = Vector3(1.4, 1.0, 0.65)
+		stain.material_override = blood_mat
+		add_child(stain)
+
+func _update_forest_culling() -> void:
+	# Keep nearby scenery active; distant props are hidden. The camera still renders
+	# only what is in its view. This is distance culling, not map downloading.
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return
+	var camera_xz := Vector2(camera.global_position.x, camera.global_position.z)
+	for prop in forest_props:
+		var node := prop["node"] as Node3D
+		if not is_instance_valid(node):
+			continue
+		var prop_pos: Vector2 = prop["position"]
+		var distance := camera_xz.distance_to(prop_pos)
+		node.visible = distance <= 24.0
 
 func _make_hud() -> void:
 	var layer := CanvasLayer.new()
