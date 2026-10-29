@@ -40,13 +40,32 @@ var forest_props: Array[Dictionary] = []
 var cull_timer := 0.0
 var hud: Label
 var status_label: Label
+var hud_layer: CanvasLayer
+var menu_layer: CanvasLayer
+var menu_root: Control
+var settings_root: Control
+var settings_panel: PanelContainer
+var game_started := false
+var graphics_quality := "Medium"
+var master_volume := 0.8
+var sfx_volume := 0.8
+var music_volume := 0.55
+var music_player: AudioStreamPlayer
+var sfx_player: AudioStreamPlayer
+var world_environment: Environment
+var cull_distance := 24.0
 
 func _ready() -> void:
+	_load_settings()
+	_ensure_audio_buses()
 	_make_environment()
 	_make_arena()
 	_make_forest_decor()
 	_make_hud()
-	_start_wave()
+	_make_main_menu()
+	_apply_graphics_quality()
+	_apply_audio_settings()
+	_play_ambient_music()
 
 func _process(delta: float) -> void:
 	_update_zombies(delta)
@@ -63,12 +82,20 @@ func _process(delta: float) -> void:
 			spawn_timer = maxf(0.35, 1.15 - float(episode) * 0.006)
 		if enemies_to_spawn <= 0 and zombies.is_empty():
 			wave_active = false
-			wave += 1
-			if wave > 5:
-				wave = 1
-				episode = mini(100, episode + 1)
 			money += 35
-			status_label.text = "Wave cleared! +$35 • Tap START WAVE"
+			if wave < 5:
+				wave += 1
+				status_label.text = "Wave cleared! +$35 • Next: Wave %d" % wave
+			elif episode >= 100:
+				status_label.text = "CAMPAIGN COMPLETE — Episode 100 defeated!"
+				_save_progress()
+				_show_main_menu()
+			else:
+				episode += 1
+				wave = 1
+				status_label.text = "Episode %d unlocked! +$35 • Prepare your defenses." % episode
+				_save_progress()
+			_update_hud()
 	_update_hud()
 
 func _make_environment() -> void:
@@ -83,6 +110,7 @@ func _make_environment() -> void:
 	e.fog_light_color = Color(0.055, 0.075, 0.09)
 	e.fog_density = 0.018
 	env.environment = e
+	world_environment = e
 	add_child(env)
 	var light := DirectionalLight3D.new()
 	light.rotation_degrees = Vector3(-55, -25, 0)
@@ -230,19 +258,27 @@ func _update_forest_culling() -> void:
 			continue
 		var prop_pos: Vector2 = prop["position"]
 		var distance := camera_xz.distance_to(prop_pos)
-		node.visible = distance <= 24.0
+		node.visible = distance <= cull_distance
 
 func _make_hud() -> void:
-	var layer := CanvasLayer.new()
-	add_child(layer)
+	hud_layer = CanvasLayer.new()
+	hud_layer.visible = false
+	add_child(hud_layer)
 	var panel := PanelContainer.new()
 	panel.position = Vector2(16, 16)
-	panel.custom_minimum_size = Vector2(310, 0)
-	layer.add_child(panel)
+	panel.custom_minimum_size = Vector2(330, 0)
+	panel.add_theme_stylebox_override("panel", _make_panel_style())
+	hud_layer.add_child(panel)
 	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 8)
 	panel.add_child(column)
+	var hud_title := Label.new()
+	hud_title.text = "NIGHTFALL  //  DEFENSE"
+	hud_title.add_theme_font_size_override("font_size", 19)
+	hud_title.add_theme_color_override("font_color", Color(0.45, 0.82, 1.0))
+	column.add_child(hud_title)
 	hud = Label.new()
-	hud.add_theme_font_size_override("font_size", 18)
+	hud.add_theme_font_size_override("font_size", 16)
 	column.add_child(hud)
 	var selector := OptionButton.new()
 	for weapon_name in WEAPONS.keys():
@@ -252,21 +288,30 @@ func _make_hud() -> void:
 	)
 	column.add_child(selector)
 	var place_button := Button.new()
-	place_button.text = "PLACE MODE: tap empty tile"
+	place_button.text = "BUILD TURRET  •  TAP EMPTY TILE"
+	_style_button(place_button)
 	place_button.pressed.connect(func() -> void:
 		status_label.text = "Selected %s — tap a free tile." % selected_weapon
 	)
 	column.add_child(place_button)
 	var wave_button := Button.new()
-	wave_button.text = "START WAVE"
+	wave_button.text = "▶  START NEXT WAVE"
+	_style_button(wave_button)
 	wave_button.pressed.connect(_start_wave)
 	column.add_child(wave_button)
 	var save_button := Button.new()
 	save_button.text = "SAVE PROGRESS"
+	_style_button(save_button)
 	save_button.pressed.connect(_save_progress)
 	column.add_child(save_button)
+	var menu_button := Button.new()
+	menu_button.text = "Ⅱ  PAUSE / SETTINGS"
+	_style_button(menu_button)
+	menu_button.pressed.connect(_show_main_menu)
+	column.add_child(menu_button)
 	status_label = Label.new()
 	status_label.text = "Choose a turret, then tap a free grid tile."
+	status_label.add_theme_color_override("font_color", Color(0.72, 0.82, 0.91))
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(status_label)
 
@@ -456,8 +501,10 @@ func _update_zombies(delta: float) -> void:
 		if path_index >= PATH_CELLS.size():
 			base_health -= 1
 			_remove_zombie(zombie)
-			if base_health <= 0:
-				status_label.text = "BASE LOST — restart the game to try again."
+					if base_health <= 0:
+				wave_active = false
+				status_label.text = "BASE LOST — choose RESTART RUN from the menu."
+				_show_main_menu()
 			continue
 		zombie["path_index"] = path_index
 		zombie["progress"] = progress
@@ -470,11 +517,13 @@ func _spawn_zombie() -> void:
 	var type_name := "Walker"
 	if episode >= 100 and wave == 5:
 		type_name = "Mutant Boss"
-	elif episode >= 31 and wave == 4:
-		type_name = "Toxic"
-	elif episode >= 21 and wave == 3:
-		type_name = "Armored"
-	elif episode >= 11 and wave == 2:
+	elif wave == 5:
+		type_name = "Armored" if episode >= 15 else "Runner"
+	elif wave == 4:
+		type_name = "Toxic" if episode >= 8 else "Armored"
+	elif wave == 3:
+		type_name = "Armored" if episode >= 4 else "Runner"
+	elif wave == 2:
 		type_name = "Runner"
 	var data: Dictionary = ZOMBIE_TYPES[type_name]
 	var body := MeshInstance3D.new()
@@ -490,12 +539,18 @@ func _spawn_zombie() -> void:
 	zombies.append({"node": body, "position": _cell_world(PATH_CELLS[0]), "path_index": 0, "progress": 0.0, "hp": float(data["hp"]) * (1.0 + float(episode - 1) * 0.04), "speed": float(data["speed"]), "reward": data["reward"]})
 
 func _start_wave() -> void:
-	if wave_active:
+	if not game_started:
 		return
-	enemies_to_spawn = mini(6 + episode, 30) if wave < 5 else mini(10 + episode, 40)
+	if wave_active or base_health <= 0:
+		return
+	if episode >= 100 and wave == 5:
+		enemies_to_spawn = 1
+	else:
+		enemies_to_spawn = mini(5 + episode + wave, 28) if wave < 5 else mini(9 + int(episode * 0.8), 38)
 	spawn_timer = 0.25
 	wave_active = true
-	status_label.text = "Episode %d • Wave %d incoming!" % [episode, wave]
+	status_label.text = "EPISODE %d  •  WAVE %d incoming!" % [episode, wave]
+	_play_sfx(220.0, 0.22)
 
 func _cell_world(cell: Vector2i) -> Vector3:
 	return Vector3(cell.x * TILE_SIZE, 0, cell.y * TILE_SIZE)
@@ -514,4 +569,313 @@ func _save_progress() -> void:
 	var file := FileAccess.open("user://savegame.json", FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(data))
-		status_label.text = "Progress saved locally on this device."
+		if is_instance_valid(status_label):
+			status_label.text = "Progress saved locally on this device."
+
+func _make_main_menu() -> void:
+	menu_layer = CanvasLayer.new()
+	add_child(menu_layer)
+	menu_root = Control.new()
+	menu_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	menu_layer.add_child(menu_root)
+	var backdrop := ColorRect.new()
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0.012, 0.02, 0.035, 0.96)
+	menu_root.add_child(backdrop)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	menu_root.add_child(center)
+	var stack := VBoxContainer.new()
+	stack.custom_minimum_size = Vector2(340, 0)
+	stack.add_theme_constant_override("separation", 12)
+	center.add_child(stack)
+	var eyebrow := Label.new()
+	eyebrow.text = "SURVIVAL STRATEGY  •  OFFLINE"
+	eyebrow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	eyebrow.add_theme_font_size_override("font_size", 12)
+	eyebrow.add_theme_color_override("font_color", Color(0.42, 0.75, 0.91))
+	stack.add_child(eyebrow)
+	var title := Label.new()
+	title.text = "NIGHTFALL"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 38)
+	title.add_theme_color_override("font_color", Color(0.86, 0.93, 1.0))
+	stack.add_child(title)
+	var subtitle := Label.new()
+	subtitle.text = "ZOMBIE TOWER DEFENSE 3D"
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_font_size_override("font_size", 14)
+	subtitle.add_theme_color_override("font_color", Color(0.65, 0.72, 0.82))
+	stack.add_child(subtitle)
+	var divider := HSeparator.new()
+	stack.add_child(divider)
+	var play_button := Button.new()
+	play_button.text = "▶   PLAY / CONTINUE"
+	play_button.custom_minimum_size = Vector2(0, 48)
+	_style_button(play_button)
+	play_button.pressed.connect(_start_or_resume_game)
+	stack.add_child(play_button)
+	var settings_button := Button.new()
+	settings_button.text = "⚙   SETTINGS"
+	settings_button.custom_minimum_size = Vector2(0, 44)
+	_style_button(settings_button)
+	settings_button.pressed.connect(_show_settings)
+	stack.add_child(settings_button)
+	var restart_button := Button.new()
+	restart_button.text = "↻   RESTART RUN"
+	restart_button.custom_minimum_size = Vector2(0, 44)
+	_style_button(restart_button)
+	restart_button.pressed.connect(_restart_campaign)
+	stack.add_child(restart_button)
+	var footer := Label.new()
+	footer.text = "EPISODES 01–100   •   BUILD • DEFEND • SURVIVE"
+	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	footer.add_theme_font_size_override("font_size", 10)
+	footer.add_theme_color_override("font_color", Color(0.38, 0.48, 0.58))
+	stack.add_child(footer)
+	_make_settings_panel()
+	_show_main_menu()
+
+func _make_settings_panel() -> void:
+	settings_root = Control.new()
+	settings_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	settings_root.visible = false
+	menu_root.add_child(settings_root)
+	var shade := ColorRect.new()
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade.color = Color(0.008, 0.014, 0.026, 0.98)
+	settings_root.add_child(shade)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	settings_root.add_child(center)
+	settings_panel = PanelContainer.new()
+	settings_panel.custom_minimum_size = Vector2(340, 0)
+	settings_panel.add_theme_stylebox_override("panel", _make_panel_style())
+	center.add_child(settings_panel)
+	var stack := VBoxContainer.new()
+	stack.add_theme_constant_override("separation", 10)
+	settings_panel.add_child(stack)
+	var heading := Label.new()
+	heading.text = "SETTINGS"
+	heading.add_theme_font_size_override("font_size", 26)
+	heading.add_theme_color_override("font_color", Color(0.45, 0.82, 1.0))
+	stack.add_child(heading)
+	var quality_label := Label.new()
+	quality_label.text = "GRAPHICS QUALITY"
+	stack.add_child(quality_label)
+	var quality := OptionButton.new()
+	quality.add_item("Low  •  smoother FPS")
+	quality.add_item("Medium  •  balanced")
+	quality.add_item("High  •  more scenery")
+	quality.select(1 if graphics_quality == "Medium" else (0 if graphics_quality == "Low" else 2))
+	quality.item_selected.connect(func(index: int) -> void:
+		graphics_quality = ["Low", "Medium", "High"][index]
+		_apply_graphics_quality()
+		_save_settings()
+	)
+	stack.add_child(quality)
+	_add_volume_slider(stack, "MASTER VOLUME", "master", master_volume)
+	_add_volume_slider(stack, "SOUND EFFECTS", "sfx", sfx_volume)
+	_add_volume_slider(stack, "AMBIENT MUSIC", "music", music_volume)
+	var note := Label.new()
+	note.text = "Settings save locally on this device."
+	note.add_theme_font_size_override("font_size", 11)
+	note.add_theme_color_override("font_color", Color(0.56, 0.66, 0.76))
+	stack.add_child(note)
+	var back := Button.new()
+	back.text = "←  BACK TO MENU"
+	back.custom_minimum_size = Vector2(0, 42)
+	_style_button(back)
+	back.pressed.connect(func() -> void:
+		settings_root.visible = false
+	)
+	stack.add_child(back)
+
+func _add_volume_slider(parent: VBoxContainer, label_text: String, key: String, initial_value: float) -> void:
+	var label := Label.new()
+	label.text = "%s  %d%%" % [label_text, roundi(initial_value * 100.0)]
+	parent.add_child(label)
+	var slider := HSlider.new()
+	slider.min_value = 0.0
+	slider.max_value = 1.0
+	slider.step = 0.05
+	slider.value = initial_value
+	slider.custom_minimum_size = Vector2(0, 22)
+	slider.value_changed.connect(func(value: float) -> void:
+		match key:
+			"master": master_volume = value
+			"sfx": sfx_volume = value
+			"music": music_volume = value
+		label.text = "%s  %d%%" % [label_text, roundi(value * 100.0)]
+		_apply_audio_settings()
+		_save_settings()
+	)
+	parent.add_child(slider)
+
+func _show_main_menu() -> void:
+	if is_instance_valid(menu_root):
+		menu_root.visible = true
+		settings_root.visible = false
+	if is_instance_valid(hud_layer):
+		hud_layer.visible = false
+	if is_instance_valid(music_player) and not music_player.playing:
+		music_player.play()
+
+func _show_settings() -> void:
+	if is_instance_valid(menu_root):
+		menu_root.visible = true
+		settings_root.visible = true
+	if is_instance_valid(hud_layer):
+		hud_layer.visible = false
+
+func _start_or_resume_game() -> void:
+	if base_health <= 0:
+		_restart_campaign()
+		return
+	game_started = true
+	menu_root.visible = false
+	settings_root.visible = false
+	hud_layer.visible = true
+	if not wave_active:
+		_start_wave()
+
+func _restart_campaign() -> void:
+	for zombie in zombies.duplicate():
+		_remove_zombie(zombie)
+	for turret in turrets:
+		if is_instance_valid(turret["node"]):
+			(turret["node"] as Node3D).queue_free()
+	turrets.clear()
+	for cell in grid.keys():
+		grid[cell] = null
+	episode = 1
+	wave = 1
+	money = 350
+	base_health = 20
+	enemies_to_spawn = 0
+	wave_active = false
+	game_started = true
+	_save_progress()
+	_start_or_resume_game()
+
+func _make_panel_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.025, 0.045, 0.07, 0.97)
+	style.border_color = Color(0.12, 0.32, 0.45, 0.95)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(12)
+	style.content_margin_left = 16
+	style.content_margin_right = 16
+	style.content_margin_top = 16
+	style.content_margin_bottom = 16
+	return style
+
+func _style_button(button: Button) -> void:
+	button.add_theme_font_size_override("font_size", 14)
+	button.add_theme_color_override("font_color", Color(0.84, 0.92, 1.0))
+	button.add_theme_stylebox_override("normal", _make_button_style(Color(0.045, 0.09, 0.14)))
+	button.add_theme_stylebox_override("hover", _make_button_style(Color(0.07, 0.16, 0.23)))
+	button.add_theme_stylebox_override("pressed", _make_button_style(Color(0.09, 0.22, 0.29)))
+
+func _make_button_style(color: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = color
+	style.border_color = Color(0.13, 0.36, 0.5, 0.9)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	return style
+
+func _load_settings() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load("user://settings.cfg") == OK:
+		graphics_quality = str(cfg.get_value("graphics", "quality", "Medium"))
+		master_volume = float(cfg.get_value("audio", "master", 0.8))
+		sfx_volume = float(cfg.get_value("audio", "sfx", 0.8))
+		music_volume = float(cfg.get_value("audio", "music", 0.55))
+
+func _save_settings() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("graphics", "quality", graphics_quality)
+	cfg.set_value("audio", "master", master_volume)
+	cfg.set_value("audio", "sfx", sfx_volume)
+	cfg.set_value("audio", "music", music_volume)
+	cfg.save("user://settings.cfg")
+
+func _apply_graphics_quality() -> void:
+	match graphics_quality:
+		"Low":
+			cull_distance = 13.0
+			Engine.max_fps = 30
+			if world_environment != null:
+				world_environment.fog_density = 0.028
+		"High":
+			cull_distance = 38.0
+			Engine.max_fps = 60
+			if world_environment != null:
+				world_environment.fog_density = 0.014
+		_:
+			cull_distance = 24.0
+			Engine.max_fps = 60
+			if world_environment != null:
+				world_environment.fog_density = 0.018
+	_update_forest_culling()
+
+func _ensure_audio_buses() -> void:
+	for bus_name in ["SFX", "Music"]:
+		if AudioServer.get_bus_index(bus_name) == -1:
+			AudioServer.add_bus()
+			AudioServer.set_bus_name(AudioServer.bus_count - 1, bus_name)
+
+func _apply_audio_settings() -> void:
+	var master_idx := AudioServer.get_bus_index("Master")
+	if master_idx >= 0:
+		AudioServer.set_bus_volume_db(master_idx, linear_to_db(maxf(master_volume, 0.001)))
+	var sfx_idx := AudioServer.get_bus_index("SFX")
+	if sfx_idx >= 0:
+		AudioServer.set_bus_volume_db(sfx_idx, linear_to_db(maxf(sfx_volume, 0.001)))
+	var music_idx := AudioServer.get_bus_index("Music")
+	if music_idx >= 0:
+		AudioServer.set_bus_volume_db(music_idx, linear_to_db(maxf(music_volume, 0.001)))
+
+func _make_tone(frequency: float, duration: float, volume: float, is_loop: bool = false) -> AudioStreamWAV:
+	var sample_rate := 22050
+	var count := int(sample_rate * duration)
+	var bytes := PackedByteArray()
+	bytes.resize(count * 2)
+	for i in range(count):
+		var t := float(i) / float(sample_rate)
+		var envelope := 1.0 if is_loop else maxf(0.0, 1.0 - t / duration)
+		var sample := sin(TAU * frequency * t) * volume * envelope
+		if is_loop:
+			sample = (sample + sin(TAU * (frequency * 1.47) * t) * volume * 0.28) * 0.5
+		bytes.encode_s16(i * 2, int(sample * 32767.0))
+	var stream := AudioStreamWAV.new()
+	stream.mix_rate = sample_rate
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.data = bytes
+	if is_loop:
+		stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		stream.loop_begin = 0
+		stream.loop_end = count
+	return stream
+
+func _play_ambient_music() -> void:
+	if music_player != null:
+		return
+	music_player = AudioStreamPlayer.new()
+	music_player.bus = "Music"
+	music_player.stream = _make_tone(48.0, 6.0, 0.10, true)
+	add_child(music_player)
+	music_player.play()
+
+func _play_sfx(frequency: float, duration: float) -> void:
+	if sfx_player == null:
+		sfx_player = AudioStreamPlayer.new()
+		sfx_player.bus = "SFX"
+		add_child(sfx_player)
+	sfx_player.stream = _make_tone(frequency, duration, 0.12)
+	sfx_player.play()
