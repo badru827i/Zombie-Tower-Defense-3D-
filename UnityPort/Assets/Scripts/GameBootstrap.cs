@@ -8,6 +8,7 @@ public class GameBootstrap : MonoBehaviour
 {
     const int W=12,H=8; const float TILE=1.5f;
     readonly HashSet<Vector2Int> path=new HashSet<Vector2Int>();
+    readonly List<Vector2Int> pathOrder=new List<Vector2Int>();
     readonly Dictionary<Vector2Int,GameObject> turrets=new Dictionary<Vector2Int,GameObject>();
     readonly Dictionary<Vector2Int,int> turretLevels=new Dictionary<Vector2Int,int>();
     readonly Dictionary<Vector2Int,string> turretTypes=new Dictionary<Vector2Int,string>();
@@ -22,7 +23,7 @@ public class GameBootstrap : MonoBehaviour
     void Awake(){
         Application.targetFrameRate=60;
         int[,] pts={{0,3},{1,3},{2,3},{3,3},{3,4},{3,5},{4,5},{5,5},{6,5},{6,4},{6,3},{7,3},{8,3},{9,3},{9,4},{9,5},{10,5},{11,5}};
-        for(int i=0;i<pts.GetLength(0);i++)path.Add(new Vector2Int(pts[i,0],pts[i,1]));
+        for(int i=0;i<pts.GetLength(0);i++){var cell=new Vector2Int(pts[i,0],pts[i,1]);path.Add(cell);pathOrder.Add(cell);}
         BuildWorld();BuildUI();ShowMenu();
     }
     Material Mat(Color c){var m=new Material(Shader.Find("Standard"));m.color=c;return m;}
@@ -83,7 +84,7 @@ public class GameBootstrap : MonoBehaviour
         info.text="NIGHTFALL // DEFENSE\nEpisode "+episode+"/100 • Wave "+wave+"/5\nCash: $"+money+"    Base HP: "+hp+"\nTurrets: "+turrets.Count+"   Enemies: "+enemies.Count;
         if(!playing)return;
         if(waveActive){spawnTimer-=Time.deltaTime;if(spawnTimer<=0&&remaining>0){SpawnEnemy();remaining--;spawnTimer=Mathf.Max(.35f,1.1f-episode*.006f);}if(remaining==0&&enemies.Count==0){waveActive=false;money+=35;if(wave<5)wave++;else{wave=1;episode=Mathf.Min(100,episode+1);}status.text="Wave cleared! +$35";}}
-        var cells=new List<Vector2Int>(path);
+        var cells=pathOrder;
         for(int i=enemies.Count-1;i>=0;i--){var e=enemies[i];if(!e.go){enemies.RemoveAt(i);continue;}e.progress+=e.speed*Time.deltaTime;int idx=Mathf.FloorToInt(e.progress);if(idx>=cells.Count){hp--;Destroy(e.go);enemies.RemoveAt(i);continue;}Vector3 a=Cell(cells[idx])+Vector3.up*.5f;Vector3 b=Cell(cells[Mathf.Min(idx+1,cells.Count-1)])+Vector3.up*.5f;e.go.transform.position=Vector3.Lerp(a,b,e.progress-idx);}
         foreach(var kv in turrets){var p=kv.Value.transform.position;int level=turretLevels.ContainsKey(kv.Key)?turretLevels[kv.Key]:1;Enemy target=null;float best=5.5f+level*.3f;foreach(var e in enemies)if(e.go&&Vector3.Distance(p,e.go.transform.position)<best){best=Vector3.Distance(p,e.go.transform.position);target=e;}if(target!=null){target.health-=Time.deltaTime*(22f+level*13f);if(target.health<=0){money+=10;Destroy(target.go);target.go=null;}}}
         if(hp<=0){status.text="BASE DESTROYED — restart run.";playing=false;}
@@ -95,9 +96,13 @@ public class GameBootstrap : MonoBehaviour
             int cost=costs[type]*(level+1);
             if(money<cost){status.text="Upgrade costs $"+cost+".";return;}
             money-=cost;level++;turretLevels[c]=level;
-            var tower=turrets[c];tower.transform.localScale=new Vector3(.65f+.08f*(level-1),.45f+.12f*(level-1),.65f+.08f*(level-1));
-            var rr=tower.GetComponent<Renderer>();rr.material.color=Color.Lerp(rr.material.color,Color.white,.12f);
-            tower.name=type+" Turret Level "+level;status.text=type+" upgraded to Level "+level+" — more damage and range.";return;
+            var oldTower=turrets[c];Color upgradedColor=Color.Lerp(oldTower.GetComponent<Renderer>().material.color,Color.white,.12f);
+            Vector3 towerPos=oldTower.transform.position;Destroy(oldTower);
+            PrimitiveType upgradedShape=level==2?PrimitiveType.Cube:level==3?PrimitiveType.Sphere:level==4?PrimitiveType.Capsule:PrimitiveType.Cylinder;
+            Vector3 upgradedScale=level==2?new Vector3(.85f,.62f,.85f):level==3?Vector3.one*.95f:level==4?new Vector3(.72f,1.05f,.72f):new Vector3(1.05f,.9f,1.05f);
+            var tower=Shape(upgradedShape,type+" Turret Level "+level,towerPos,upgradedScale,upgradedColor);
+            if(level==5)Shape(PrimitiveType.Sphere,type+" Core",towerPos+Vector3.up*.9f,Vector3.one*.32f,Color.white);
+            turrets[c]=tower;status.text=type+" evolved to Level "+level+" — damage and range increased.";return;
         }
         if(money<costs[selected]){status.text="Not enough cash.";return;}
         money-=costs[selected];Color col=selected=="Tesla"?Color.magenta:selected=="Rocket"?Color.red:selected=="Gatling"?Color.yellow:selected=="Heavy Cannon"?new Color(1f,.45f,.12f):new Color(.2f,.8f,1f);
