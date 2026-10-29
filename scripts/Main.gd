@@ -57,6 +57,7 @@ var cull_distance := 24.0
 
 func _ready() -> void:
 	_load_settings()
+	_load_progress()
 	_ensure_audio_buses()
 	_make_environment()
 	_make_arena()
@@ -262,6 +263,7 @@ func _update_forest_culling() -> void:
 
 func _make_hud() -> void:
 	hud_layer = CanvasLayer.new()
+	hud_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	hud_layer.visible = false
 	add_child(hud_layer)
 	var panel := PanelContainer.new()
@@ -564,6 +566,19 @@ func _remove_zombie(zombie: Dictionary) -> void:
 func _update_hud() -> void:
 	hud.text = "ZOMBIE DEFENSE 3D\nEpisode %d/100 • Wave %d/5\nCash: $%d   Base HP: %d\nTurrets: %d   Enemies: %d" % [episode, wave, money, base_health, turrets.size(), zombies.size()]
 
+func _load_progress() -> void:
+	if not FileAccess.file_exists("user://savegame.json"):
+		return
+	var file := FileAccess.open("user://savegame.json", FileAccess.READ)
+	if file == null:
+		return
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	if parsed is Dictionary:
+		episode = clampi(int(parsed.get("episode", 1)), 1, 100)
+		wave = clampi(int(parsed.get("wave", 1)), 1, 5)
+		money = maxi(0, int(parsed.get("money", 350)))
+		base_health = clampi(int(parsed.get("base_health", 20)), 0, 20)
+
 func _save_progress() -> void:
 	var data := {"episode": episode, "wave": wave, "money": money, "base_health": base_health}
 	var file := FileAccess.open("user://savegame.json", FileAccess.WRITE)
@@ -574,6 +589,7 @@ func _save_progress() -> void:
 
 func _make_main_menu() -> void:
 	menu_layer = CanvasLayer.new()
+	menu_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(menu_layer)
 	menu_root = Control.new()
 	menu_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -713,6 +729,7 @@ func _add_volume_slider(parent: VBoxContainer, label_text: String, key: String, 
 	parent.add_child(slider)
 
 func _show_main_menu() -> void:
+	get_tree().paused = game_started
 	if is_instance_valid(menu_root):
 		menu_root.visible = true
 		settings_root.visible = false
@@ -732,6 +749,7 @@ func _start_or_resume_game() -> void:
 	if base_health <= 0:
 		_restart_campaign()
 		return
+	get_tree().paused = false
 	game_started = true
 	menu_root.visible = false
 	settings_root.visible = false
