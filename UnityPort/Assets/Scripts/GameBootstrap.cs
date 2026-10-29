@@ -59,7 +59,7 @@ public class GameBootstrap : MonoBehaviour
     }
     void MenuButton(string value,float y,UnityEngine.Events.UnityAction action){var g=new GameObject(value);g.transform.SetParent(menu.transform,false);var r=g.AddComponent<RectTransform>();r.anchorMin=new Vector2(.5f,1);r.anchorMax=new Vector2(.5f,1);r.pivot=new Vector2(.5f,1);r.anchoredPosition=new Vector2(0,y);r.sizeDelta=new Vector2(350,52);var im=g.AddComponent<Image>();im.color=new Color(.04f,.15f,.22f);var b=g.AddComponent<Button>();b.targetGraphic=im;b.onClick.AddListener(action);var t=Label(g.transform,value,20,Vector2.zero,new Vector2(350,52),TextAnchor.MiddleCenter);t.rectTransform.anchorMin=Vector2.zero;t.rectTransform.anchorMax=Vector2.one;t.rectTransform.offsetMin=Vector2.zero;t.rectTransform.offsetMax=Vector2.zero;}
     void ShowSettings(){
-        bool returnToMenu=!playing;
+        bool returnToMenu=!playing; bool resumeGame=playing; playing=false;
         if(menu)Destroy(menu);
         menu=new GameObject("Settings");menu.transform.SetParent(canvas.transform,false);
         var bg=menu.AddComponent<Image>();bg.color=new Color(.015f,.035f,.055f,.97f);
@@ -76,7 +76,7 @@ public class GameBootstrap : MonoBehaviour
         var sim=sg.AddComponent<Image>();sim.color=new Color(.2f,.3f,.34f);
         var slider=sg.AddComponent<Slider>();slider.minValue=0;slider.maxValue=1;slider.value=masterVolume;
         slider.onValueChanged.AddListener(v=>{masterVolume=v;AudioListener.volume=v;vol.text="Master volume: "+Mathf.RoundToInt(v*100)+"%";});
-        MenuButton("BACK",-410,()=>{if(menu)Destroy(menu);menu=null;if(returnToMenu)ShowMenu();});
+        MenuButton("BACK",-410,()=>{if(menu)Destroy(menu);menu=null;if(returnToMenu)ShowMenu();else if(resumeGame)playing=true;});
     }
     void SetQuality(int q){graphicsQuality=q;QualitySettings.SetQualityLevel(q,true);Application.targetFrameRate=q==0?30:q==1?45:60;status.text="Graphics: "+(q==0?"Low":q==1?"Medium":"High");}
     void StartWave(){if(waveActive)return;waveActive=true;remaining=8+wave*2+episode/5;spawnTimer=.2f;status.text="Episode "+episode+" • Wave "+wave+" incoming!";}
